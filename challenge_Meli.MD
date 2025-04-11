@@ -1,35 +1,5 @@
 # 📌 Challenge Meli 
-Estructura del repositorio:
-.
-├── Ejercicio_1
-│   ├── cloudformation
-│   │   ├── ec2.yml
-│   │   ├── efs.yml
-│   │   ├── haproxy.yml
-│   │   ├── main.yml
-│   │   ├── security_groups.yml
-│   │   └── vpc.yml
-│   ├── instructivo.MD
-│   └── scripts
-│       └── deploy.sh
-├── Ejercicio_2
-│   ├── Opcion_1
-│   │   ├── Opcion_1.MD
-│   │   └── vpc_peering.yml
-│   ├── Opcion_2
-│   │   ├── Opcion_2.MD
-│   │   └── TransitGateway.yml
-│   └── resumen.MD
-├── Ejercicio_3
-│   └── troubleshooting.MD
-├── Ejercicio_4
-│   └── ejercicio_4.MD
-├── Ejercicio_5
-│   └── Ejercicio_5.MD
-└── Ejercicios
-    ├── captura.pcap
-    ├── cf_template.yml
-    └── challenge_mercado_libre_v1.0.pdf
+
 
 Este desafío me permitió poner en práctica habilidades clave en infraestructura cloud, redes y automatización. Desde el principio, mi enfoque fue claro: diseñar una solución eficiente, escalable y bien documentada. Trabajé con **AWS CloudFormation** para automatizar el despliegue, exploré diferentes estrategias de conectividad entre redes y me sumergí en troubleshooting avanzado para resolver problemas de infraestructura.
 
