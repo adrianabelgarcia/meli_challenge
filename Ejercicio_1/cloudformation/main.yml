@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Stack principal para la API REST en AWS
+
+Resources:
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: vpc.yml
+
+  SecurityGroupsStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: security_groups.yml
+      Parameters:
+        VpcId: !GetAtt VPCStack.Outputs.VpcId
+
+  EFSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: efs.yml
+      Parameters:
+        VpcId: !GetAtt VPCStack.Outputs.VpcId
+
+  EC2Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ec2.yml
+      Parameters:
+        SubnetId: !GetAtt VPCStack.Outputs.PublicSubnetId
+        SecurityGroupId: !GetAtt SecurityGroupsStack.Outputs.SecurityGroupId
+        FileSystemId: !GetAtt EFSStack.Outputs.FileSystemId
+
+  HAProxyStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: haproxy.yml
+      Parameters:
+        SubnetId: !GetAtt VPCStack.Outputs.PublicSubnetId
+        SecurityGroupId: !GetAtt SecurityGroupsStack.Outputs.SecurityGroupId

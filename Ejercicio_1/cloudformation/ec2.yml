@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Instancias EC2 con API REST
+
+Resources:
+  WebServer1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0f9575d3d509bae0c
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y python3 git
+          git clone https://github.com/tu-repo/api-rest.git /opt/api
+          cd /opt/api
+          pip3 install -r requirements.txt
+          mkdir -p /mnt/efs
+          mount -t efs ${FileSystemId}:/ /mnt/efs
+          python3 app.py &
+
+  WebServer2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0f9575d3d509bae0c
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y python3 git
+          git clone https://github.com/tu-repo/api-rest.git /opt/api
+          cd /opt/api
+          pip3 install -r requirements.txt
+          mkdir -p /mnt/efs
+          mount -t efs ${FileSystemId}:/ /mnt/efs
+          python3 app.py &
+
+Outputs:
+  WebServer1PrivateIP:
+    Value: !GetAtt WebServer1.PrivateIp
+  WebServer2PrivateIP:
+    Value: !GetAtt WebServer2.PrivateIp

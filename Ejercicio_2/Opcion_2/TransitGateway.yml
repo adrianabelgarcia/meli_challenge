@@ -1,0 +1,31 @@
+Resources:
+  TransitGateway:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Description: "Centralized transit gateway"
+      DefaultRouteTableAssociation: enable
+      DefaultRouteTablePropagation: enable
+
+  TGWAttachment1:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TransitGateway
+      VpcId: !Ref VPC1
+      SubnetIds:
+        - !Ref PublicSubnet1
+
+  TGWAttachment2:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TransitGateway
+      VpcId: !Ref VPC2
+      SubnetIds:
+        - !Ref PublicSubnet2
+
+  TGWAttachment3:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TransitGateway
+      VpcId: !Ref VPC3
+      SubnetIds:
+        - !Ref PublicSubnet3
