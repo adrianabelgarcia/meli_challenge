@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: 2010-09-09
+Mappings:
+    SubnetConfig:
+      VPC:
+        CIDR: "10.0.0.0/16"
+      Private:
+        CIDR: "10.0.1.0/24"
+
+Resources:
+  VPC:
+      Type: "AWS::EC2::VPC"
+      Properties:
+        EnableDnsSupport: "true"
+        EnableDnsHostnames: "true"
+        CidrBlock:
+          Fn::FindInMap:
+            - "SubnetConfig"
+            - "VPC"
+            - "CIDR"
+
+  PrivateSubnet:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        VpcId:
+          Ref: "VPC"
+        CidrBlock:
+          Fn::FindInMap:
+            - "SubnetConfig"
+            - "Private"
+            - "CIDR"
+  
+  PrivateRouteTable:
+      Type: "AWS::EC2::RouteTable"
+      Properties:
+        VpcId:
+          Ref: "VPC"
+
+  PrivateSubnetRouteTableAssociation:
+      Type: "AWS::EC2::SubnetRouteTableAssociation"
+      Properties:
+        SubnetId:
+          Ref: "PrivateSubnet"
+        RouteTableId:
+          Ref: "PrivateRouteTable"
+
+  EC2V4XZKL:
+    Type: 'AWS::EC2::Volume'
+    Properties: 
+      Size: 50
+      AvailabilityZone: { "Fn::GetAtt" : ["EC2I4RZA6", "AvailabilityZone"] }
+ 
+  EC2I4RZA6:
+    Type: 'AWS::EC2::Instance'
+    Properties: 
+      InstanceType: 't2.micro'
+      ImageId: 'ami-1853ac65'
+      SubnetId: 
+        Ref: "PrivateSubnet"
+ 
+  EC2I80L5:
+    Type: 'AWS::EC2::Instance'
+    Properties:  
+      InstanceType: 't2.micro'
+      ImageId: 'ami-1853ac65'
+      SubnetId: 
+        Ref: "PrivateSubnet"
+ 
+  EC2V3KIVD:
+    Type: 'AWS::EC2::Volume'
+    Properties:  
+      Size: 50
+      AvailabilityZone: { "Fn::GetAtt" : ["EC2I80L5", "AvailabilityZone"] }
+ 
+  EC2VA2M0LC:
+    Type: 'AWS::EC2::VolumeAttachment'
+    Properties:
+      Device: '/dev/sdh'
+      VolumeId: !Ref EC2V4XZKL
+      InstanceId: !Ref EC2I4RZA6
+ 
+  EC2VA4O8N1:
+    Type: 'AWS::EC2::VolumeAttachment'
+    Properties:
+      Device: '/dev/sdh'
+      VolumeId: !Ref EC2V3KIVD
+      InstanceId: !Ref EC2I80L5
+ 
+  EFSFSEQKW:
+    Type: 'AWS::EFS::FileSystem'
+    Properties: {}
