@@ -52,6 +52,7 @@ Archivo `haproxy.cfg`:
 
 - `install_api.sh`: Instala dependencias, monta EFS y ejecuta la API.
 - `install_haproxy.sh`: Instala HAProxy y carga configuración personalizada.
+- `deploy_stack.sh`: Crea y despliega el stack de CloudFormation.
 
 ---
 
