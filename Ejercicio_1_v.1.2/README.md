@@ -42,7 +42,7 @@ Archivo `server.py`. Define la lógica de los endpoints usando `http.server`:
 Todos los datos se comparten entre instancias gracias al EFS montado.
 
 ### ✅ HAProxy
-Archivo `haproxy.cfg`:
+Archivo `haproxy.cfg`: el cual se ejecuta en el userdata de la instancia de HAProxy.
 
 - Escucha en el puerto `80`.
 - Balancea solicitudes HTTP hacia las instancias EC2 en puerto `5000`.
@@ -50,18 +50,14 @@ Archivo `haproxy.cfg`:
 
 ### ✅ Scripts
 
-- `install_api.sh`: Instala dependencias, monta EFS y ejecuta la API.
-- `install_haproxy.sh`: Instala HAProxy y carga configuración personalizada.
 - `deploy_stack.sh`: Crea y despliega el stack de CloudFormation.
 
 ---
 
 ## 4. Despliegue
 
-1. Ejecutar el template `CFTemplate.yml` desde CloudFormation.
-2. Conectarse a cada instancia EC2 y ejecutar el script de instalación (`install_api.sh`).
-3. En la instancia de HAProxy, ejecutar `install_haproxy.sh`.
-4. Validar que los endpoints respondan desde la IP del balanceador (`http://<haproxy_ip>/json`).
+1. Ejecutar el script deploy_stack.sh.
+2. Validar que los endpoints respondan desde la IP del balanceador (`http://<haproxy_ip>/json`).
 
 ---
 
