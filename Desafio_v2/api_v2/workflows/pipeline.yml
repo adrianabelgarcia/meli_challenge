@@ -1,0 +1,134 @@
+name: Update Backend API on ASG Instances
+
+on:
+  push:
+    paths:
+      - 'Desafio_v2/api_v2/api/server.py'
+    branches:
+      - main
+
+jobs:
+  deploy_backend:
+    name: Update API on ASG instances
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Setup AWS CLI
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Get ASG Instance IDs
+      id: get_instances
+      run: |
+        ASG_NAME="meli-api-asg"
+
+        INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+          --auto-scaling-group-names "$ASG_NAME" \
+          --query "AutoScalingGroups[].Instances[].InstanceId" \
+          --output text)
+
+        echo "INSTANCE_IDS=$INSTANCE_IDS" >> $GITHUB_ENV
+
+    - name: Upload new server.py to instances
+      run: |
+        for INSTANCE_ID in $INSTANCE_IDS; do
+          echo "Updating instance $INSTANCE_ID..."
+
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Updating server.py backend" \
+            --parameters commands="
+
+              cd /home/ec2-user
+
+              # Backup old version
+              cp server.py server.py.bak || true
+
+              # Download new version from GitHub raw
+              curl -s -o server.py https://raw.githubusercontent.com/adrianabelgarcia/meli_challenge/main/Desafio_v2/api_v2/api/server.py
+
+              chmod +x server.py
+
+              # Kill previous process (optional, depends on how is running)
+              pkill -f server.py || true
+
+              # Start new version
+              nohup python3 server.py > server.log 2>&1 &
+            " \
+            --region us-east-1 \
+            --comment "Deploy updated backend"
+        done
+name: Update Backend API on ASG Instances
+
+on:
+  push:
+    paths:
+      - 'Desafio_v2/api_v2/api/server.py'
+    branches:
+      - main
+
+jobs:
+  deploy_backend:
+    name: Update API on ASG instances
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Setup AWS CLI
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Get ASG Instance IDs
+      id: get_instances
+      run: |
+        ASG_NAME="meli-api-asg"
+
+        INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+          --auto-scaling-group-names "$ASG_NAME" \
+          --query "AutoScalingGroups[].Instances[].InstanceId" \
+          --output text)
+
+        echo "INSTANCE_IDS=$INSTANCE_IDS" >> $GITHUB_ENV
+
+    - name: Upload new server.py to instances
+      run: |
+        for INSTANCE_ID in $INSTANCE_IDS; do
+          echo "Updating instance $INSTANCE_ID..."
+
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Updating server.py backend" \
+            --parameters commands="
+
+              cd /home/ec2-user
+
+              # Backup old version
+              cp server.py server.py.bak || true
+
+              # Download new version from GitHub raw
+              curl -s -o server.py https://raw.githubusercontent.com/adrianabelgarcia/meli_challenge/main/Desafio_v2/api_v2/api/server.py
+
+              chmod +x server.py
+
+              # Kill previous process (optional, depends on how is running)
+              pkill -f server.py || true
+
+              # Start new version
+              nohup python3 server.py > server.log 2>&1 &
+            " \
+            --region us-east-1 \
+            --comment "Deploy updated backend"
+        done
