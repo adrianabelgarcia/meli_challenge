@@ -1,0 +1,25 @@
+config:
+  target: 'https://d1nqrw8lizrbhe.cloudfront.net'  # La URL de tu API
+  phases:
+    - duration: 60  # Duración de la prueba en segundos
+      arrivalRate: 50  # Número de solicitudes por segundo
+    - duration: 120  # Duración de la siguiente fase en segundos
+      arrivalRate: 100  # Aumentar el número de solicitudes por segundo a medida que pasa el tiempo
+    - duration: 180  # Duración de la fase final
+      arrivalRate: 200  # Picos de carga más altos (hasta 200 solicitudes por segundo)
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+
+scenarios:
+  - flow:
+      - get:
+          url: "/"
+      - post:
+          url: "/json"
+          json:
+            id: "{{ randomInt(1, 1000) }}"
+            name: "Test {{ randomInt(1, 1000) }}"
+            description: "Test description"
+      - get:
+          url: "/json/{{ randomInt(1, 1000) }}"

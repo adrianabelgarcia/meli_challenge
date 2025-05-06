@@ -1,0 +1,432 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Infraestructura Unificada con ALB Multi-AZ + CloudFront + Backend API en AutoScaling + SSM
+
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: "10.0.0.0/16"
+
+Resources:
+
+  # --- VPC ---
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap [SubnetConfig, VPC, CIDR]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # --- Public Subnets ---
+
+  PublicSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs "" ]
+      MapPublicIpOnLaunch: true
+
+  PublicSubnetAZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs "" ]
+      MapPublicIpOnLaunch: true
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ1
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetRouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ2
+      RouteTableId: !Ref PublicRouteTable
+
+  # --- Private Subnets ---
+
+  PrivateSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs "" ]
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnetAZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs "" ]
+      MapPublicIpOnLaunch: false
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateSubnetRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAZ1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAZ2
+      RouteTableId: !Ref PrivateRouteTable
+
+
+  # --- Security Groups ---
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP from ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: 0.0.0.0/0
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow NFS traffic
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: 0.0.0.0/0
+
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  # --- EFS ---
+
+  EFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+
+  EFSMountTargetAZ1:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId: !Ref EFSFileSystem
+        SubnetId: !Ref PrivateSubnetAZ1
+        SecurityGroups:
+          - !Ref EFSSecurityGroup
+
+  EFSMountTargetAZ2:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId: !Ref EFSFileSystem
+        SubnetId: !Ref PrivateSubnetAZ2
+        SecurityGroups:
+          - !Ref EFSSecurityGroup
+
+
+  # --- IAM Role e Instance Profile ---
+
+  InstanceProfileRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+        - arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceProfileRole
+
+  # --- Backend Launch Template + ASG ---
+
+  BackendLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        InstanceType: t2.micro
+        ImageId: ami-0c02fb55956c7d316
+        KeyName: access_test
+        IamInstanceProfile:
+          Name: !Ref InstanceProfile
+        SecurityGroupIds:
+          - !Ref BackendSecurityGroup
+          - !Ref SSHSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: Backend API Instance
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y python3 amazon-ssm-agent nfs-utils
+            systemctl enable amazon-ssm-agent
+            systemctl start amazon-ssm-agent
+
+            mkdir -p /mnt/data
+
+            # Esperar hasta que EFS esté disponible
+            until mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noac,_netdev ${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com:/ /mnt/data; do
+                echo "Esperando que EFS esté disponible..."
+                sleep 5
+            done
+
+            cat <<EOF > /home/ec2-user/server.py
+            from http.server import BaseHTTPRequestHandler, HTTPServer
+            import json, os
+
+            DATA_PATH = "/mnt/data"
+
+            class SimpleAPI(BaseHTTPRequestHandler):
+                def _send_response(self, status=200, body=None):
+                    self.send_response(status)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    if body is not None:
+                        self.wfile.write(json.dumps(body).encode())
+
+                def do_GET(self):
+                    if self.path == "/": return self._send_response(200, {"status": "ok"})
+                    if self.path.startswith("/json/"):
+                        obj_id = self.path.split("/")[-1]
+                        file_path = os.path.join(DATA_PATH, f"{obj_id}.json")
+                        if os.path.exists(file_path):
+                            with open(file_path) as f:
+                                return self._send_response(200, json.load(f))
+                            return self._send_response(404, {"error": "Not found"})
+                        return self._send_response(404, {"error": "Not found"})
+
+                def do_POST(self):
+                    if self.path == "/json":
+                        length = int(self.headers.get("Content-Length", 0))
+                        data = json.loads(self.rfile.read(length))
+                        if "id" not in data:
+                            return self._send_response(400, {"error": "Missing id"})
+                        with open(os.path.join(DATA_PATH, f"{data['id']}.json"), "w") as f:
+                            json.dump(data, f)
+                        return self._send_response(201, {"message": "Created"})
+                    return self._send_response(404, {"error": "Invalid endpoint"})
+
+                def do_PUT(self):
+                    if self.path.startswith("/json/"):
+                        obj_id = self.path.split("/")[-1]
+                        file_path = os.path.join(DATA_PATH, f"{obj_id}.json")
+                        length = int(self.headers.get("Content-Length", 0))
+                        data = json.loads(self.rfile.read(length))
+                        if os.path.exists(file_path):
+                            with open(file_path, "w") as f:
+                                json.dump(data, f)
+                            return self._send_response(200, {"message": "Updated"})
+                        return self._send_response(404, {"error": "Not found"})
+                    return self._send_response(404, {"error": "Invalid endpoint"})
+
+                def do_DELETE(self):
+                    if self.path.startswith("/json/"):
+                        obj_id = self.path.split("/")[-1]
+                        file_path = os.path.join(DATA_PATH, f"{obj_id}.json")
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            return self._send_response(200, {"message": "Deleted"})
+                        return self._send_response(404, {"error": "Not found"})
+                    return self._send_response(404, {"error": "Invalid endpoint"})
+
+            if __name__ == "__main__":
+                HTTPServer(("0.0.0.0", 5000), SimpleAPI).serve_forever()
+            EOF
+
+            nohup python3 /home/ec2-user/server.py &
+
+
+  BackendASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnetAZ1
+        - !Ref PrivateSubnetAZ2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BackendLaunchTemplate
+        Version: !GetAtt BackendLaunchTemplate.LatestVersionNumber
+      MinSize: 2
+      MaxSize: 5
+      DesiredCapacity: 2
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+
+  # --- ALB ---
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP from Internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - !Ref PublicSubnetAZ1
+        - !Ref PublicSubnetAZ2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Scheme: internet-facing
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Port: 5000
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /
+      HealthCheckPort: "5000"
+      TargetGroupAttributes:
+        - Key: stickiness.enabled
+          Value: true
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: 300
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  # --- CloudFront ---
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - DomainName: !GetAtt ApplicationLoadBalancer.DNSName
+            Id: ALBOrigin
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: ALBOrigin
+          ViewerProtocolPolicy: allow-all
+          AllowedMethods:
+            - HEAD
+            - DELETE
+            - POST
+            - GET
+            - OPTIONS
+            - PUT
+            - PATCH
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: !Ref NoCachePolicy
+          OriginRequestPolicyId: !Ref AllViewerPolicy
+        PriceClass: PriceClass_100
+        Comment: "CloudFront distribution for Backend API"
+
+  NoCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: "NoCachePolicy"
+        DefaultTTL: 0
+        MaxTTL: 0
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: false
+          EnableAcceptEncodingBrotli: false
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  AllViewerPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: "AllViewerPolicy"
+        CookiesConfig:
+          CookieBehavior: none
+        HeadersConfig:
+          HeaderBehavior: allViewer
+        QueryStringsConfig:
+          QueryStringBehavior: all
+
+Outputs:
+
+  ALBDNSName:
+    Description: DNS del Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: ALBDNSName
+
+  CloudFrontURL:
+    Description: URL de CloudFront
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: CloudFrontURL

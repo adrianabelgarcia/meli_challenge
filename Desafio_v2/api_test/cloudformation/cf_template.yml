@@ -1,0 +1,314 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Infraestructura con HAProxy balanceando EC2 Instances
+
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: "10.0.0.0/16"
+    Private:
+      CIDR: "10.0.2.0/24"
+
+Resources:
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap [SubnetConfig, VPC, CIDR]
+      Tags:
+        - Key: Name
+          Value: VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, Private, CIDR]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow traffic from HAProxy on port 5000
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref HAProxySecurityGroup
+      Tags:
+        - Key: Name
+          Value: BackendSG
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow NFS from BackendSG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref BackendSecurityGroup
+      Tags:
+        - Key: Name
+          Value: EFSSG
+
+  HAProxySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP from internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: HAProxySG
+
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH from internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SSHSG
+
+  EFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+
+  EFSMountTarget:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  EC2Instance1:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - EFSMountTarget
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0c02fb55956c7d316
+      SubnetId: !Ref PrivateSubnet
+      PrivateIpAddress: 10.0.2.10
+      SecurityGroupIds:
+        - !Ref BackendSecurityGroup
+        - !Ref SSHSecurityGroup
+      Tags:
+        - Key: Name
+          Value: EC2Instance1
+        - Key: Role
+          Value: BackendAPI
+      KeyName: access_test
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y && yum install -y nfs-utils python3
+          mkdir -p /mnt/efs
+          mount -t nfs4 -o nfsvers=4.1 ${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com:/ /mnt/efs
+          cat <<"EOF" > /mnt/efs/server.py
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+          import json, os
+          EFS_PATH = '/mnt/efs'
+          class SimpleAPI(BaseHTTPRequestHandler):
+              def _send_response(self, status=200, body=None):
+                  self.send_response(status)
+                  self.send_header('Content-type', 'application/json')
+                  self.end_headers()
+                  if body is not None:
+                      self.wfile.write(json.dumps(body).encode())
+              def do_GET(self):
+                  if self.path == '/':
+                      return self._send_response(200, {'status': 'ok'})
+                  if self.path.startswith('/json/'):
+                      json_id = self.path.split('/')[-1]
+                      file_path = os.path.join(EFS_PATH, f"{json_id}.json")
+                      if os.path.exists(file_path):
+                          with open(file_path) as f:
+                              return self._send_response(200, json.load(f))
+                      return self._send_response(404, {'error': 'Not found'})
+                  self._send_response(404, {'error': 'Invalid endpoint'})
+              def do_POST(self):
+                  if self.path == '/json':
+                      content_len = int(self.headers.get('Content-Length', 0))
+                      data = json.loads(self.rfile.read(content_len))
+                      if 'id' not in data:
+                          return self._send_response(400, {'error': 'Missing id'})
+                      with open(os.path.join(EFS_PATH, f"{data['id']}.json"), 'w') as f:
+                          json.dump(data, f)
+                      return self._send_response(201, {'message': 'Created'})
+                  self._send_response(404, {'error': 'Invalid endpoint'})
+              def do_PUT(self):
+                  if self.path.startswith('/json/'):
+                      json_id = self.path.split('/')[-1]
+                      file_path = os.path.join(EFS_PATH, f"{json_id}.json")
+                      if not os.path.exists(file_path):
+                          return self._send_response(404, {'error': 'Not found'})
+                      data = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))))
+                      with open(file_path, 'w') as f:
+                          json.dump(data, f)
+                      return self._send_response(200, {'message': 'Updated'})
+                  self._send_response(404, {'error': 'Invalid endpoint'})
+              def do_DELETE(self):
+                  if self.path.startswith('/json/'):
+                      file_path = os.path.join(EFS_PATH, f"{self.path.split('/')[-1]}.json")
+                      if os.path.exists(file_path):
+                          os.remove(file_path)
+                          return self._send_response(200, {'message': 'Deleted'})
+                      return self._send_response(404, {'error': 'Not found'})
+                  self._send_response(404, {'error': 'Invalid endpoint'})
+          if __name__ == '__main__':
+              os.makedirs(EFS_PATH, exist_ok=True)
+              HTTPServer(('0.0.0.0', 5000), SimpleAPI).serve_forever()
+          EOF
+          nohup python3 /mnt/efs/server.py > /mnt/efs/server.log 2>&1 &
+
+  EC2Instance2:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - EFSMountTarget
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0c02fb55956c7d316
+      SubnetId: !Ref PrivateSubnet
+      PrivateIpAddress: 10.0.2.11
+      SecurityGroupIds:
+        - !Ref BackendSecurityGroup
+        - !Ref SSHSecurityGroup
+      Tags:
+        - Key: Name
+          Value: EC2Instance2
+        - Key: Role
+          Value: BackendAPI
+      KeyName: access_test
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y && yum install -y nfs-utils python3
+          mkdir -p /mnt/efs
+          mount -t nfs4 -o nfsvers=4.1 ${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com:/ /mnt/efs
+          cp /mnt/efs/server.py /home/ec2-user/server.py
+          nohup python3 /home/ec2-user/server.py > /home/ec2-user/server.log 2>&1 &
+
+  HAProxyInstance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - EFSMountTarget
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0c02fb55956c7d316
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref HAProxySecurityGroup
+        - !Ref SSHSecurityGroup
+      Tags:
+        - Key: Name
+          Value: HAProxyInstance
+      KeyName: access_test
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y && yum install -y haproxy
+          systemctl enable haproxy
+          cat <<"EOF" > /etc/haproxy/haproxy.cfg
+          global
+              daemon
+              maxconn 256
+          defaults
+              mode http
+              timeout connect 5000ms
+              timeout client 50000ms
+              timeout server 50000ms
+          frontend http_front
+              bind *:80
+              default_backend http_back
+          backend http_back
+              balance roundrobin
+              option httpchk GET /
+              server web1 10.0.2.10:5000 check
+              server web2 10.0.2.11:5000 check
+          EOF
+          sleep 3
+          systemctl start haproxy
+
+  EIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      InstanceId: !Ref HAProxyInstance
+
+Outputs:
+  HAProxyPublicIP:
+    Description: Public IP of HAProxy
+    Value: !Ref ElasticIP
+    Export:
+      Name: HAProxyPublicIP
+
+  VPCId:
+    Description: ID de la VPC
+    Value: !Ref VPC
+    Export:
+      Name: VPCId
+
+  PrivateSubnetId:
+    Description: ID de la Subnet Privada
+    Value: !Ref PrivateSubnet
+    Export:
+      Name: PrivateSubnetId
+
+  EFSFileSystemId:
+    Description: ID del File System EFS
+    Value: !Ref EFSFileSystem
+    Export:
+      Name: EFSFileSystemId
