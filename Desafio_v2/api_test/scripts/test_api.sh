@@ -1,73 +1,52 @@
 #!/bin/bash
 
-if [ "$#" -ne 1 ]; then
-    echo "Uso: $0 <IP_Publica_HAProxy>"
-    exit 1
+# Verificar si la URL fue proporcionada como parámetro
+if [ -z "$1" ]; then
+  echo "❌ Error: Debes proporcionar la URL de la API como parámetro."
+  echo "Uso: ./crud_tests.sh <URL>"
+  exit 1
 fi
 
-IP=$1
+# URL base de la API (proporcionada como primer parámetro)
+API_URL="$1"
 
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
+# Crear un recurso (POST)
+echo "🚀 Probando Crear (POST) en $API_URL"
+curl -X POST "$API_URL/json" \
+  -H "Content-Type: application/json" \
+  -d '{"id": "1", "name": "Test", "description": "This is a test item"}'
+echo -e "\n"
 
-PASSED=0
-FAILED=0
+# Leer el estado de la API (GET)
+echo "🔍 Probando Leer el estado de la API (GET) en $API_URL"
+curl "$API_URL/"
+echo -e "\n"
 
-function test() {
-    DESCRIPTION=$1
-    COMMAND=$2
-    EXPECTED=$3
+# Leer un recurso por ID (GET)
+echo "🔍 Probando Leer un recurso por ID (GET) en $API_URL"
+curl "$API_URL/json/1"
+echo -e "\n"
 
-    echo -n "-> $DESCRIPTION ... "
+# Actualizar un recurso (PUT)
+echo "✏️ Probando Actualizar un recurso (PUT) en $API_URL"
+curl -X PUT "$API_URL/json/1" \
+  -H "Content-Type: application/json" \
+  -d '{"id": "1", "name": "Updated Test", "description": "This item has been updated"}'
+echo -e "\n"
 
-    RESPONSE=$(eval $COMMAND)
-    
-    if [[ "$RESPONSE" == *"$EXPECTED"* ]]; then
-        echo -e "${GREEN}✅ PASSED${NC}"
-        ((PASSED++))
-    else
-        echo -e "${RED}❌ FAILED${NC}"
-        echo "    Esperado: $EXPECTED"
-        echo "    Obtenido: $RESPONSE"
-        ((FAILED++))
-    fi
-}
+# Eliminar un recurso (DELETE)
+echo "🗑️ Probando Eliminar un recurso (DELETE) en $API_URL"
+curl -X DELETE "$API_URL/json/1"
+echo -e "\n"
 
-echo "======================================"
-echo ">>> INICIANDO TESTS EN $IP"
-echo "======================================"
+# Intentar crear un recurso sin el campo 'id' (Prueba de error)
+echo "❌ Probando Crear sin ID (POST) en $API_URL"
+curl -X POST "$API_URL/json" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Missing ID", "description": "This item has no ID"}'
+echo -e "\n"
 
-# 1 - Estado inicial
-test "GET / (Estado OK)" "curl -s http://$IP" '"status": "ok"'
-
-# 2 - Crear recurso
-test "POST /json (Crear test1)" "curl -s -X POST -H \"Content-Type: application/json\" -d '{\"id\": \"test1\", \"message\": \"Hello World\"}' http://$IP/json" '"message": "Created"'
-
-# 3 - Obtener recurso creado
-test "GET /json/test1 (Debe existir)" "curl -s http://$IP/json/test1" '"id": "test1"'
-
-# 4 - Modificar recurso
-test "PUT /json/test1 (Modificar mensaje)" "curl -s -X PUT -H \"Content-Type: application/json\" -d '{\"id\": \"test1\", \"message\": \"Updated Hello\"}' http://$IP/json/test1" '"message": "Updated"'
-
-# 5 - Leer recurso actualizado
-test "GET /json/test1 (Verificar actualización)" "curl -s http://$IP/json/test1" '"message": "Updated Hello"'
-
-# 6 - Eliminar recurso
-test "DELETE /json/test1 (Eliminar test1)" "curl -s -X DELETE http://$IP/json/test1" '"message": "Deleted"'
-
-# 7 - Verificar eliminación
-test "GET /json/test1 (Debe estar eliminado)" "curl -s http://$IP/json/test1" '"error": "Not found"'
-
-echo ""
-echo "======================================"
-echo ">>> RESULTADO FINAL"
-echo "PASADOS: $PASSED"
-echo "FALLADOS: $FAILED"
-echo "======================================"
-
-if [[ $FAILED -eq 0 ]]; then
-    echo -e "${GREEN}✅ TODOS LOS TESTS PASARON${NC}"
-else
-    echo -e "${RED}❌ ALGUNOS TESTS FALLARON${NC}"
-fi
+# Intentar obtener un recurso que no existe (GET con ID no existente)
+echo "❌ Probando Obtener recurso inexistente (GET) en $API_URL"
+curl "$API_URL/json/999"
+echo -e "\n"

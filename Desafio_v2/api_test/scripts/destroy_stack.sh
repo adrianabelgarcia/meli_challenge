@@ -2,7 +2,7 @@
 
 set -e
 
-STACK_NAME="HAProxyBackendStack"
+STACK_NAME="meli-stack-api"
 REGION="us-east-1"
 
 echo "⚡ Eliminando stack '$STACK_NAME' en región $REGION..."
